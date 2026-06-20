@@ -1,0 +1,21 @@
+{
+  "parameter_note": "The paper specifies the module order but does not report numeric enhancement parameters.",
+  "nlm": {
+    "h_factor": 0.8,
+    "patch_size": 5,
+    "patch_distance": 6,
+    "fast_mode": true
+  },
+  "unsharp_mask": {
+    "sigma": 1.0,
+    "amount": 0.6
+  },
+  "clahe": {
+    "mild_clip_limit": 1.5,
+    "standard_clip_limit": 2.0,
+    "tile_grid_size": [8, 8]
+  },
+  "gamma": {
+    "value": 0.8
+  }
+}
