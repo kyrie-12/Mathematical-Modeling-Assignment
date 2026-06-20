@@ -1,0 +1,7 @@
+﻿.venv/
+.packages/
+.matplotlib/
+__pycache__/
+*.pyc
+data/
+results/
