@@ -30,6 +30,18 @@ models, traditional image enhancement, and a fixed vessel segmentation evaluator
 
 The project uses the public DRIVE retinal vessel segmentation dataset.
 
+Dataset source:
+
+- Official project page: <https://drive.grand-challenge.org/>
+- Original reference: Staal et al., "Ridge-based vessel segmentation in color
+  images of the retina", IEEE Transactions on Medical Imaging, 2004.
+
+DRIVE contains 40 color fundus images with vessel annotations and field-of-view
+masks. The official split includes 20 training images and 20 test images. In this
+project, the training split is used to train degradation-recognition and
+enhancement-selection modules, while the test split is used as the validation
+set for segmentation and robustness evaluation.
+
 Expected local structure:
 
 ```text
