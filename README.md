@@ -1,37 +1,136 @@
-# Mathematical Modeling Assignment
+# Degradation-Aware Retinal Image Enhancement for Vessel Segmentation
 
-This project studies degradation-aware enhancement for DRIVE retinal images.
+This repository contains the code for a mathematical modeling course project on
+low-quality retinal image degradation recognition, adaptive image enhancement,
+and vessel segmentation evaluation on the DRIVE dataset.
 
-## Current pipeline
+The project studies a practical question:
 
-1. Generate normal, noisy, blurred, low-contrast, and mixed inputs.
-2. Extract interpretable image-quality features.
-3. Train a five-class random-forest baseline.
-4. Train three random-forest component classifiers for noise, blur, and low contrast.
-5. Estimate noise severity with a random-forest regressor.
-6. Select NLM strength from a training-only downstream Dice grid search.
-7. Route each predicted component combination to a matching enhancement chain.
-8. Segment vessels with a fixed CLAHE, multi-scale Frangi, Otsu, and morphology pipeline.
-9. Compare no enhancement, fixed enhancement, and adaptive enhancement.
+> Can we first identify the degradation type of a low-quality medical image and
+> then choose a matching enhancement strategy that improves downstream vessel
+> segmentation?
 
-The component code is ordered as `noise-blur-low_contrast`:
+The final pipeline combines interpretable image-quality features, random forest
+models, traditional image enhancement, and a fixed vessel segmentation evaluator.
 
-| Code | Predicted degradation | Enhancement strategy |
+## Project Highlights
+
+- Builds synthetic low-quality retinal images with noise, blur, low contrast,
+  and mixed degradation.
+- Extracts interpretable degradation features from image statistics, gradients,
+  texture, residuals, and frequency information.
+- Trains random forest models for degradation recognition and noise severity
+  estimation.
+- Uses adaptive enhancement routes based on predicted degradation components.
+- Evaluates enhancement quality using both image-quality metrics and medical
+  segmentation metrics.
+- Includes module ablation and robustness grouping experiments.
+
+## Dataset
+
+The project uses the public DRIVE retinal vessel segmentation dataset.
+
+Expected local structure:
+
+```text
+data/raw/DRIVE/
+  training/
+    images/
+    1st_manual/
+    mask/
+  test/
+    images/
+    1st_manual/
+    mask/
+```
+
+The dataset is not included in this repository. Put the downloaded DRIVE files
+under `data/raw/DRIVE/` before running the pipeline.
+
+## Method Overview
+
+The complete workflow is:
+
+```text
+DRIVE images
+  -> synthetic degradation generation
+  -> degradation feature extraction
+  -> random forest degradation recognition
+  -> adaptive enhancement
+  -> fixed vessel segmentation
+  -> image-quality and segmentation evaluation
+  -> ablation and robustness analysis
+```
+
+The adaptive enhancement component code is ordered as:
+
+```text
+noise-blur-low_contrast
+```
+
+| Code | Predicted degradation components | Enhancement strategy |
 |---|---|---|
 | `000` | normal | identity |
 | `100` | noise | severity-aware NLM or identity fallback |
-| `010` | blur | unsharp mask, mild CLAHE |
-| `001` | low contrast | gamma, CLAHE |
-| `110` | noise and blur | severity-aware NLM, unsharp mask |
-| `101` | noise and low contrast | severity-aware NLM, weak CLAHE |
-| `011` | blur and low contrast | unsharp mask, gamma, mild CLAHE |
-| `111` | all three | severity-aware NLM, weak CLAHE |
+| `010` | blur | unsharp mask + mild CLAHE |
+| `001` | low contrast | Gamma correction + CLAHE |
+| `110` | noise + blur | severity-aware NLM + unsharp mask |
+| `101` | noise + low contrast | severity-aware NLM + weak CLAHE |
+| `011` | blur + low contrast | unsharp mask + Gamma correction + mild CLAHE |
+| `111` | noise + blur + low contrast | severity-aware NLM + weak CLAHE |
 
-The original five-class prediction is retained in the model bundle and result tables as a baseline.
+The original five-class classifier is retained as a baseline, while the final
+adaptive route uses multi-label component prediction and noise severity
+estimation.
 
-## Reproduce stages 5-8
+## Environment
+
+Python 3.11 is recommended.
+
+Install dependencies:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Main dependencies:
+
+- NumPy
+- OpenCV
+- scikit-image
+- scikit-learn
+- SciPy
+- Matplotlib
+
+## Repository Structure
+
+```text
+config/
+  stage6_enhancement.json          # selected enhancement parameters
+
+src/
+  04_generate_degradations.py       # generate synthetic degraded images
+  05_extract_features.py            # extract degradation-recognition features
+  05_train_degradation_classifier.py # train RF/SVM and component models
+  06_tune_noise_enhancement.py      # tune NLM strength using training Dice
+  06_adaptive_enhancement.py        # generate fixed and adaptive enhanced images
+  07_vessel_segmentation.py         # fixed vessel segmentation evaluator
+  08_evaluate_results.py            # compute metrics and summaries
+  09_module_ablation.py             # module ablation experiments
+  10_noise_robustness.py            # robustness grouping experiments
+
+data/                               # local data and generated images, ignored by git
+results/                            # experiment outputs, ignored by git
+```
+
+## Reproduce the Full Pipeline
+
+Run from the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe src\04_generate_degradations.py
+.\.venv\Scripts\python.exe src\05_extract_features.py
 .\.venv\Scripts\python.exe src\05_train_degradation_classifier.py
 .\.venv\Scripts\python.exe src\06_tune_noise_enhancement.py
 .\.venv\Scripts\python.exe src\06_adaptive_enhancement.py --overwrite
@@ -41,25 +140,103 @@ The original five-class prediction is retained in the model bundle and result ta
 .\.venv\Scripts\python.exe src\10_noise_robustness.py
 ```
 
-The training-only NLM search selects identity for sigma 5, `h=5` for sigma 15, and `h=12`
-for sigma 30. Current test Dice scores are `0.5349` without enhancement, `0.3670` with fixed
-enhancement, and `0.6059` with component-aware, noise-severity-aware adaptive enhancement.
+The training-only NLM search selected:
 
-## Stage 9 module ablation
+| Noise sigma | Selected NLM strength |
+|---:|---:|
+| 5 | 0, identity fallback |
+| 15 | 5 |
+| 30 | 12 |
 
-Stage 9 keeps the segmentation evaluator fixed and compares the full adaptive pipeline with:
+## Main Results
 
-- fixed enhancement for every image (remove degradation recognition),
-- CLAHE only for noisy images (remove denoising),
-- unsharp masking only for low-contrast images (remove contrast enhancement), and
-- fixed NLM only for blurred images (remove sharpening).
+The final test set contains 280 degraded image variants from the 20 DRIVE test
+images. The three main treatment groups are no enhancement, fixed enhancement,
+and adaptive enhancement.
 
-The script writes paired per-sample metrics, a summary table, the exact protocol, and a Dice
-comparison figure under `results/stage9_ablation/`.
+| Group | Dice | IoU | SSIM | HD95 |
+|---|---:|---:|---:|---:|
+| No enhancement | 0.5349 | 0.3805 | 0.7838 | 17.1968 |
+| Fixed enhancement | 0.3670 | 0.2284 | 0.7623 | 22.3810 |
+| Adaptive enhancement | 0.6059 | 0.4504 | 0.8565 | 17.4064 |
 
-## Stage 10 noise-severity robustness
+The adaptive strategy improves average Dice and IoU compared with both no
+enhancement and fixed enhancement. It also improves SSIM, which indicates better
+structure preservation. However, HD95 is close to the no-enhancement result,
+showing that boundary errors are not fully solved by the current enhancement
+pipeline.
 
-Stage 10 groups the 60 test noise samples by Gaussian noise sigma (`5`, `15`, and `30`). It
-compares all three treatment groups using Dice, IoU, precision, recall, HD/HD95, PSNR, and
-SSIM. Paired bootstrap confidence intervals and Wilcoxon tests use the 20 DRIVE test image
-IDs as independent units. Outputs are written under `results/stage10_noise_robustness/`.
+## Stage 9: Module Ablation
+
+Stage 9 evaluates whether each module contributes to the final adaptive result.
+
+| Ablation setting | Target subset | Full Dice | Ablated Dice | Dice contribution |
+|---|---|---:|---:|---:|
+| Remove degradation recognition | all | 0.6059 | 0.3670 | +0.2388 |
+| Remove denoising | noise | 0.4859 | 0.4556 | +0.0302 |
+| Remove contrast enhancement | low contrast | 0.7121 | 0.5991 | +0.1129 |
+| Remove sharpening | blur | 0.7143 | 0.3138 | +0.4005 |
+
+The ablation study shows that degradation recognition and blur-oriented
+sharpening contribute strongly. Denoising improves Dice on noisy images, but it
+can also trade recall, precision, and boundary behavior, so it should not be
+interpreted as universally beneficial.
+
+## Stage 10: Robustness Grouping
+
+The robustness experiment follows a paper-style grouping strategy. Noise samples
+are grouped by Gaussian noise sigma. Mixed degradation samples are grouped by
+component count:
+
+- two-component mixed degradation is treated as medium mixed degradation;
+- three-component mixed degradation is treated as strong mixed degradation.
+
+| Group | No enhancement Dice | Fixed enhancement Dice | Adaptive enhancement Dice | Adaptive - Fixed |
+|---|---:|---:|---:|---:|
+| Medium mixed degradation | 0.4350 | 0.3253 | 0.5678 | +0.2425 |
+| Strong mixed degradation | 0.3512 | 0.2835 | 0.3399 | +0.0565 |
+| Noise sigma 5 | 0.6367 | 0.4578 | 0.6435 | +0.1857 |
+| Noise sigma 15 | 0.3808 | 0.4966 | 0.4818 | -0.0148 |
+| Noise sigma 30 | 0.3022 | 0.3739 | 0.3323 | -0.0417 |
+
+The robustness results show that adaptive enhancement is especially useful for
+mixed degradation, where a single fixed enhancement chain is less well matched
+to the input. For pure noise degradation, adaptive enhancement performs best
+under light noise, is close to fixed enhancement under medium noise, and falls
+behind fixed enhancement under strong noise. This indicates that the current
+adaptive strategy is safer for degradation-type matching and structure
+preservation, but it is not guaranteed to achieve the best Dice under every
+noise intensity.
+
+## Generated Outputs
+
+Important outputs are written to:
+
+```text
+results/stage8_evaluation/
+results/stage9_ablation/
+results/stage10_noise_robustness/
+```
+
+Useful files include:
+
+- `results/stage8_evaluation/tables/metrics_per_sample.csv`
+- `results/stage8_evaluation/tables/test_overall_metrics.json`
+- `results/stage9_ablation/tables/module_ablation_summary.csv`
+- `results/stage10_noise_robustness/tables/paper_style_robustness_summary.csv`
+- `results/stage10_noise_robustness/figures/paper_style_robustness.png`
+
+These outputs are generated locally and are ignored by git.
+
+## Conclusion
+
+This project supports three main conclusions:
+
+1. Interpretable degradation features combined with random forest models can
+   identify synthetic retinal image degradation reliably enough to drive
+   enhancement selection.
+2. Adaptive enhancement improves average downstream vessel segmentation compared
+   with a fixed enhancement pipeline.
+3. The benefit of adaptive enhancement is condition-dependent: it is strong for
+   mixed degradation and light noise, but strong pure noise still requires better
+   denoising or segmentation-aware enhancement design.
