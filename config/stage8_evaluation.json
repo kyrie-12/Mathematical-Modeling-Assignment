@@ -1,0 +1,11 @@
+{
+  "image_quality_channel": "green",
+  "data_range": 255.0,
+  "psnr_cap_db": 100.0,
+  "hausdorff_empty_value": "image_diagonal",
+  "groups": [
+    "no_enhancement",
+    "fixed_enhancement",
+    "adaptive_enhancement"
+  ]
+}
