@@ -8,8 +8,6 @@ from pathlib import Path
 import cv2
 import joblib
 import numpy as np
-from skimage import img_as_float32, img_as_ubyte
-from skimage.restoration import denoise_nl_means, estimate_sigma
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MPL_CONFIG_DIR = PROJECT_ROOT / ".matplotlib"
@@ -27,7 +25,7 @@ STRATEGY_NAMES = {
     "normal": "identity",
     "noise": "non_local_means",
     "blur": "unsharp_mask_then_mild_clahe",
-    "low_contrast": "clahe_then_gamma",
+    "low_contrast": "gamma_then_clahe",
     "mixed": "non_local_means_then_clahe",
 }
 
@@ -56,28 +54,15 @@ def apply_inside_fov(original: np.ndarray, enhanced: np.ndarray, fov_mask: np.nd
     return output
 
 
-def apply_nlm(image: np.ndarray, config: dict, fov_mask: np.ndarray) -> np.ndarray:
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image_float = img_as_float32(image_rgb)
-    y_indices, x_indices = np.where(fov_mask)
-    y0, y1 = y_indices.min(), y_indices.max() + 1
-    x0, x1 = x_indices.min(), x_indices.max() + 1
-    sigma_patch = image_float[y0:y1, x0:x1].copy()
-    patch_mask = fov_mask[y0:y1, x0:x1]
-    median_color = np.median(sigma_patch[patch_mask], axis=0)
-    sigma_patch[~patch_mask] = median_color
-    sigma = float(np.mean(estimate_sigma(sigma_patch, channel_axis=-1)))
-    denoised = denoise_nl_means(
-        image_float,
-        h=float(config["h_factor"]) * sigma,
-        sigma=sigma,
-        fast_mode=bool(config["fast_mode"]),
-        patch_size=int(config["patch_size"]),
-        patch_distance=int(config["patch_distance"]),
-        channel_axis=-1,
+def apply_nlm(image: np.ndarray, config: dict) -> np.ndarray:
+    return cv2.fastNlMeansDenoisingColored(
+        image,
+        None,
+        h=float(config["h"]),
+        hColor=float(config["h_color"]),
+        templateWindowSize=int(config["template_window_size"]),
+        searchWindowSize=int(config["search_window_size"]),
     )
-    denoised_bgr = cv2.cvtColor(img_as_ubyte(denoised), cv2.COLOR_RGB2BGR)
-    return denoised_bgr
 
 
 def apply_unsharp_mask(image: np.ndarray, config: dict) -> np.ndarray:
@@ -109,12 +94,11 @@ def enhance_by_prediction(
     image: np.ndarray,
     predicted_class: str,
     config: dict,
-    fov_mask: np.ndarray,
 ) -> np.ndarray:
     if predicted_class == "normal":
         return image.copy()
     if predicted_class == "noise":
-        return apply_nlm(image, config["nlm"], fov_mask)
+        return apply_nlm(image, config["nlm"])
     if predicted_class == "blur":
         enhanced = apply_unsharp_mask(image, config["unsharp_mask"])
         return apply_clahe(
@@ -123,14 +107,14 @@ def enhance_by_prediction(
             config["clahe"]["tile_grid_size"],
         )
     if predicted_class == "low_contrast":
-        enhanced = apply_clahe(
-            image,
+        enhanced = apply_gamma(image, config["gamma"]["value"])
+        return apply_clahe(
+            enhanced,
             config["clahe"]["standard_clip_limit"],
             config["clahe"]["tile_grid_size"],
         )
-        return apply_gamma(enhanced, config["gamma"]["value"])
     if predicted_class == "mixed":
-        enhanced = apply_nlm(image, config["nlm"], fov_mask)
+        enhanced = apply_nlm(image, config["nlm"])
         return apply_clahe(
             enhanced,
             config["clahe"]["standard_clip_limit"],
@@ -216,7 +200,7 @@ def main() -> None:
         source_path = Path(row["degraded_image_path"])
         image = read_color(str(source_path))
         fov_mask = read_fov_mask(row["fov_mask_path"], image.shape[:2])
-        enhanced = enhance_by_prediction(image, predicted_class, config, fov_mask)
+        enhanced = enhance_by_prediction(image, predicted_class, config)
         enhanced = apply_inside_fov(image, enhanced, fov_mask)
 
         output_path = (

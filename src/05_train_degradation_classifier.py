@@ -29,19 +29,19 @@ from sklearn.metrics import (
 
 FEATURE_COLUMNS = [
     "gray_mean",
-    "gray_variance",
-    "gray_skewness",
-    "gray_kurtosis",
+    "gray_std",
+    "green_mean",
+    "green_std",
     "entropy",
     "intensity_range_90",
-    "local_contrast_std",
     "laplacian_variance",
-    "gradient_mean",
     "edge_density",
-    "high_frequency_energy_ratio",
-    "local_residual_variance",
-    "smoothing_difference_mean",
-    "smoothing_difference_std",
+    "high_frequency_energy",
+    "noise_mad_estimate",
+    "gradient_mean",
+    "gradient_std",
+    "dark_pixel_ratio",
+    "bright_pixel_ratio",
 ]
 CLASS_ORDER = ["normal", "noise", "blur", "low_contrast", "mixed"]
 

@@ -1,10 +1,9 @@
 {
-  "parameter_note": "The paper specifies the module order but does not report numeric enhancement parameters.",
   "nlm": {
-    "h_factor": 0.8,
-    "patch_size": 5,
-    "patch_distance": 6,
-    "fast_mode": true
+    "h": 10.0,
+    "h_color": 10.0,
+    "template_window_size": 7,
+    "search_window_size": 21
   },
   "unsharp_mask": {
     "sigma": 1.0,

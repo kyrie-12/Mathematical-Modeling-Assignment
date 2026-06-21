@@ -9,12 +9,14 @@ from skimage import exposure, img_as_ubyte
 from skimage.util import random_noise
 
 
-NOISE_LEVELS = (15, 30)
-BLUR_SIGMAS = (1.2, 2.0)
-CONTRAST_LEVELS = (0.45, 0.65)
+NOISE_LEVELS = (5, 15, 30)
+BLUR_KERNELS = (3, 5, 7)
+CONTRAST_LEVELS = (0.4, 0.6, 0.8)
 MIXED_CONFIGS = (
-    ("medium", 15, 1.2, 0.55),
-    ("strong", 30, 2.0, 0.45),
+    ("noise15_blur5", 15, 5, 1.0),
+    ("noise15_contrast06", 15, 1, 0.6),
+    ("blur5_contrast06", 0, 5, 0.6),
+    ("noise15_blur5_contrast06", 15, 5, 0.6),
 )
 
 
@@ -45,8 +47,8 @@ def add_gaussian_noise(image: np.ndarray, sigma: int, rng: np.random.Generator) 
     return img_as_ubyte(noisy)
 
 
-def add_gaussian_blur(image: np.ndarray, sigma: float) -> np.ndarray:
-    return cv2.GaussianBlur(image, (0, 0), sigmaX=sigma, sigmaY=sigma)
+def add_gaussian_blur(image: np.ndarray, kernel_size: int) -> np.ndarray:
+    return cv2.GaussianBlur(image, (kernel_size, kernel_size), sigmaX=0)
 
 
 def reduce_contrast(image: np.ndarray, alpha: float) -> np.ndarray:
@@ -89,7 +91,7 @@ def manifest_row(
     output: Path,
     degradation_type: str,
     noise_sigma="",
-    blur_sigma="",
+    blur_kernel="",
     contrast_alpha="",
     mixed_mode="",
 ) -> dict:
@@ -102,7 +104,7 @@ def manifest_row(
         "fov_mask_path": find_companion(drive_root, split, source, "fov"),
         "degradation_type": degradation_type,
         "noise_sigma": noise_sigma,
-        "blur_sigma": blur_sigma,
+        "blur_kernel": blur_kernel,
         "contrast_alpha": contrast_alpha,
         "mixed_mode": mixed_mode,
     }
@@ -130,12 +132,11 @@ def generate_one(
         save_png(output, degraded, overwrite)
         rows.append(manifest_row(drive_root, split, source, output, "noise", noise_sigma=sigma))
 
-    for sigma in BLUR_SIGMAS:
-        degraded = add_gaussian_blur(image, sigma)
-        sigma_name = str(sigma).replace(".", "")
-        output = output_root / split_name / "blur" / f"{source.stem}_blur_sigma{sigma_name}.png"
+    for kernel in BLUR_KERNELS:
+        degraded = add_gaussian_blur(image, kernel)
+        output = output_root / split_name / "blur" / f"{source.stem}_blur_k{kernel}.png"
         save_png(output, degraded, overwrite)
-        rows.append(manifest_row(drive_root, split, source, output, "blur", blur_sigma=sigma))
+        rows.append(manifest_row(drive_root, split, source, output, "blur", blur_kernel=kernel))
 
     for alpha in CONTRAST_LEVELS:
         degraded = reduce_contrast(image, alpha)
@@ -144,11 +145,14 @@ def generate_one(
         save_png(output, degraded, overwrite)
         rows.append(manifest_row(drive_root, split, source, output, "low_contrast", contrast_alpha=alpha))
 
-    for mode, noise_sigma, blur_sigma, alpha in MIXED_CONFIGS:
+    for mode, sigma, kernel, alpha in MIXED_CONFIGS:
         degraded = image.copy()
-        degraded = reduce_contrast(degraded, alpha)
-        degraded = add_gaussian_blur(degraded, blur_sigma)
-        degraded = add_gaussian_noise(degraded, noise_sigma, rng)
+        if sigma:
+            degraded = add_gaussian_noise(degraded, sigma, rng)
+        if kernel > 1:
+            degraded = add_gaussian_blur(degraded, kernel)
+        if alpha < 1.0:
+            degraded = reduce_contrast(degraded, alpha)
         output = output_root / split_name / "mixed" / f"{source.stem}_mixed_{mode}.png"
         save_png(output, degraded, overwrite)
         rows.append(
@@ -158,9 +162,9 @@ def generate_one(
                 source,
                 output,
                 "mixed",
-                noise_sigma=noise_sigma,
-                blur_sigma=blur_sigma,
-                contrast_alpha=alpha,
+                noise_sigma=sigma or "",
+                blur_kernel=kernel if kernel > 1 else "",
+                contrast_alpha=alpha if alpha < 1.0 else "",
                 mixed_mode=mode,
             )
         )
