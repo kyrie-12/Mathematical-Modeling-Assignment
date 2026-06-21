@@ -1,0 +1,18 @@
+{
+  "segmentation": {
+    "clahe_clip_limit": 2.0,
+    "clahe_tile_grid_size": [8, 8],
+    "frangi_sigmas": [1.0, 2.0, 3.0],
+    "frangi_beta": 0.5,
+    "frangi_structure_percentile": 95.0,
+    "frangi_gamma_factor": 0.5,
+    "otsu_threshold_factor": 0.9,
+    "closing_kernel_size": 3,
+    "minimum_component_area": 30
+  },
+  "fixed_enhancement_order": [
+    "non_local_means",
+    "clahe",
+    "unsharp_mask"
+  ]
+}
