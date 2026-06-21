@@ -17,13 +17,16 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     accuracy_score,
     classification_report,
     confusion_matrix,
+    hamming_loss,
+    mean_absolute_error,
     precision_recall_fscore_support,
+    r2_score,
 )
 
 
@@ -44,6 +47,21 @@ FEATURE_COLUMNS = [
     "bright_pixel_ratio",
 ]
 CLASS_ORDER = ["normal", "noise", "blur", "low_contrast", "mixed"]
+COMPONENT_COLUMNS = ["has_noise", "has_blur", "has_low_contrast"]
+
+
+def component_targets(rows: list[dict]) -> np.ndarray:
+    return np.asarray(
+        [
+            [
+                int(bool(row["noise_sigma"])),
+                int(bool(row["blur_kernel"])),
+                int(bool(row["contrast_alpha"])),
+            ]
+            for row in rows
+        ],
+        dtype=np.uint8,
+    )
 
 
 def load_feature_table(path: Path):
@@ -111,6 +129,19 @@ def save_feature_importance(table_path: Path, figure_path: Path, model) -> None:
     plt.close(figure)
 
 
+def save_multilabel_feature_importance(path: Path, models: dict[str, RandomForestClassifier]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["component", "feature", "importance"])
+        for component in COMPONENT_COLUMNS:
+            pairs = sorted(
+                zip(FEATURE_COLUMNS, models[component].feature_importances_),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            writer.writerows((component, name, float(value)) for name, value in pairs)
+
+
 def write_classification_report(path: Path, report: dict) -> None:
     rows = []
     for label in CLASS_ORDER:
@@ -161,6 +192,69 @@ def main() -> None:
     predictions = model.predict(x_test)
     probabilities = model.predict_proba(x_test)
 
+    y_train_components = component_targets(train_rows)
+    y_test_components = component_targets(test_rows)
+    component_models = {}
+    component_predictions = np.zeros_like(y_test_components)
+    component_probabilities = np.zeros_like(y_test_components, dtype=np.float64)
+    component_metrics = {}
+    for component_index, component in enumerate(COMPONENT_COLUMNS):
+        component_model = RandomForestClassifier(
+            n_estimators=args.trees,
+            max_features="sqrt",
+            class_weight="balanced_subsample",
+            random_state=args.seed + component_index + 1,
+            n_jobs=1,
+        )
+        component_model.fit(x_train, y_train_components[:, component_index])
+        predicted = component_model.predict(x_test).astype(np.uint8)
+        positive_index = int(np.flatnonzero(component_model.classes_ == 1)[0])
+        probability = component_model.predict_proba(x_test)[:, positive_index]
+        component_models[component] = component_model
+        component_predictions[:, component_index] = predicted
+        component_probabilities[:, component_index] = probability
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_test_components[:, component_index],
+            predicted,
+            average="binary",
+            zero_division=0,
+        )
+        component_metrics[component] = {
+            "accuracy": float(accuracy_score(y_test_components[:, component_index], predicted)),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "positive_support": int(np.sum(y_test_components[:, component_index])),
+        }
+
+    train_noise_mask = y_train_components[:, 0] == 1
+    test_noise_mask = y_test_components[:, 0] == 1
+    train_noise_sigma = np.asarray(
+        [float(row["noise_sigma"]) for row in train_rows if row["noise_sigma"]],
+        dtype=np.float64,
+    )
+    test_noise_sigma = np.asarray(
+        [float(row["noise_sigma"]) for row in test_rows if row["noise_sigma"]],
+        dtype=np.float64,
+    )
+    noise_severity_model = RandomForestRegressor(
+        n_estimators=args.trees,
+        max_features="sqrt",
+        min_samples_leaf=2,
+        random_state=args.seed + len(COMPONENT_COLUMNS) + 1,
+        n_jobs=1,
+    )
+    noise_severity_model.fit(x_train[train_noise_mask], train_noise_sigma)
+    predicted_test_noise_sigma = noise_severity_model.predict(x_test[test_noise_mask])
+    noise_severity_metrics = {
+        "model": "RandomForestRegressor",
+        "train_samples": int(np.sum(train_noise_mask)),
+        "test_samples": int(np.sum(test_noise_mask)),
+        "mae": float(mean_absolute_error(test_noise_sigma, predicted_test_noise_sigma)),
+        "rmse": float(np.sqrt(np.mean(np.square(test_noise_sigma - predicted_test_noise_sigma)))),
+        "r2": float(r2_score(test_noise_sigma, predicted_test_noise_sigma)),
+    }
+
     macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
         y_test, predictions, average="macro", zero_division=0
     )
@@ -189,12 +283,23 @@ def main() -> None:
         "weighted_precision": float(weighted_precision),
         "weighted_recall": float(weighted_recall),
         "weighted_f1": float(weighted_f1),
+        "multilabel": {
+            "components": COMPONENT_COLUMNS,
+            "subset_accuracy": float(accuracy_score(y_test_components, component_predictions)),
+            "hamming_loss": float(hamming_loss(y_test_components, component_predictions)),
+            "per_component": component_metrics,
+        },
+        "noise_severity": noise_severity_metrics,
     }
 
     model_bundle = {
         "model": model,
         "feature_columns": FEATURE_COLUMNS,
         "class_order": CLASS_ORDER,
+        "component_models": component_models,
+        "component_columns": COMPONENT_COLUMNS,
+        "component_thresholds": {component: 0.5 for component in COMPONENT_COLUMNS},
+        "noise_severity_model": noise_severity_model,
         "seed": args.seed,
     }
     joblib.dump(model_bundle, model_dir / "random_forest_degradation_classifier.joblib")
@@ -210,13 +315,21 @@ def main() -> None:
         "true_label",
         "predicted_label",
         *[f"prob_{label}" for label in CLASS_ORDER],
+        *[f"true_{component}" for component in COMPONENT_COLUMNS],
+        *[f"pred_{component}" for component in COMPONENT_COLUMNS],
+        *[f"prob_{component}" for component in COMPONENT_COLUMNS],
+        "true_noise_sigma",
+        "predicted_noise_sigma",
     ]
+    predicted_all_noise_sigma = noise_severity_model.predict(x_test)
     with (table_dir / "random_forest_predictions.csv").open(
         "w", encoding="utf-8", newline=""
     ) as file:
         writer = csv.DictWriter(file, fieldnames=prediction_fields)
         writer.writeheader()
-        for row, predicted, probability in zip(test_rows, predictions, probabilities):
+        for row_index, (row, predicted, probability) in enumerate(
+            zip(test_rows, predictions, probabilities)
+        ):
             output_row = {
                 "image_id": row["image_id"],
                 "degraded_image_path": row["degraded_image_path"],
@@ -225,6 +338,18 @@ def main() -> None:
             }
             for label in CLASS_ORDER:
                 output_row[f"prob_{label}"] = float(probability[probability_index[label]])
+            for component_index, component in enumerate(COMPONENT_COLUMNS):
+                output_row[f"true_{component}"] = int(
+                    y_test_components[row_index, component_index]
+                )
+                output_row[f"pred_{component}"] = int(
+                    component_predictions[row_index, component_index]
+                )
+                output_row[f"prob_{component}"] = float(
+                    component_probabilities[row_index, component_index]
+                )
+            output_row["true_noise_sigma"] = row["noise_sigma"]
+            output_row["predicted_noise_sigma"] = float(predicted_all_noise_sigma[row_index])
             writer.writerow(output_row)
 
     save_confusion_matrix(figure_dir / "random_forest_confusion_matrix.png", y_test, predictions)
@@ -239,6 +364,10 @@ def main() -> None:
         figure_dir / "random_forest_feature_importance.png",
         model,
     )
+    save_multilabel_feature_importance(
+        table_dir / "multilabel_feature_importance.csv",
+        component_models,
+    )
 
     print(f"Training samples: {len(train_rows)}")
     print(f"Test samples: {len(test_rows)}")
@@ -246,6 +375,10 @@ def main() -> None:
     print(f"Macro precision: {metrics['macro_precision']:.4f}")
     print(f"Macro recall: {metrics['macro_recall']:.4f}")
     print(f"Macro F1: {metrics['macro_f1']:.4f}")
+    print(f"Multilabel subset accuracy: {metrics['multilabel']['subset_accuracy']:.4f}")
+    print(f"Multilabel hamming loss: {metrics['multilabel']['hamming_loss']:.4f}")
+    print(f"Noise severity MAE: {metrics['noise_severity']['mae']:.4f}")
+    print(f"Noise severity RMSE: {metrics['noise_severity']['rmse']:.4f}")
     print(f"Outputs: {output_root}")
 
 
