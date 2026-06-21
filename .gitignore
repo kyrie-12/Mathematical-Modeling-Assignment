@@ -4,5 +4,9 @@
 __pycache__/
 *.pyc
 data/
-results/
+results/**
+!results/
+!results/**/
+!results/**/*.csv
+!results/**/*.png
 docs/reference_paper.pdf
